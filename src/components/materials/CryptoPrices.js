@@ -57,6 +57,7 @@ const CryptoDashboard = () => {
     />
   );
 
+  // ✅ crypto data
   useEffect(() => {
     const fetchCryptoData = async () => {
       try {
@@ -98,11 +99,11 @@ const CryptoDashboard = () => {
 
   const fetchHistoricalData = async (coinSymbol, coinFullName) => {
     try {
-      // Fetch historical data
+      // ✅ Fetch historical data
       const historyUrl = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${coinSymbol}&tsym=USD&limit=30&api_key=${API_KEY}`;
       const historyResponse = await fetch(historyUrl);
       const historyData = await historyResponse.json();
-  
+
       if (historyData.Response === "Success") {
         const formattedHistory = historyData.Data.Data.map((item) => ({
           date: item.time * 1000, // Convert to timestamp
@@ -112,33 +113,50 @@ const CryptoDashboard = () => {
       } else {
         console.error("Error fetching historical data:", historyData.Message);
       }
-  
-      // Fetch AI Predictions from FastAPI
-      const predictionUrl = `http://127.0.0.1:8000/predict?symbol=${coinSymbol}`;
-      const predictionResponse = await fetch(predictionUrl);
-      const predictionData = await predictionResponse.json();
-  
-      if (predictionData.predictions) {
-        const today = new Date();
-        const formattedPredictions = predictionData.predictions.map((price, index) => ({
-          date: today.getTime() + index * 86400000, // Add one day in milliseconds
-          price: price, // Ensure price is stored correctly
-        }));
-        setPredictedData(formattedPredictions);
-        console.log("Predictions Updated:", formattedPredictions);
-      } else {
-        console.error("Error fetching predictions:", predictionData.error);
-      }
-  
+
       setSelectedCoin(coinFullName);
     } catch (error) {
-      console.error("Error fetching data:", error);
+      console.error("Error fetching historical data:", error);
     }
   };
-  
 
-  if (loading) return <div>Loading...</div>;
-  if (!cryptoData) return <div>No data available.</div>;
+  // ✅ fetch prediction
+  const fetchPrediction = async (coinSymbol) => {
+    setLoading(true); //Show loading animation
+
+    try {
+      console.log(`🚀 Training model for ${coinSymbol}...`);
+      await fetch(`http://127.0.0.1:8000/train-lstm?symbol=${coinSymbol}`);
+
+      // ✅ Wait a few seconds, then fetch prediction
+      setTimeout(async () => {
+        console.log(`📊 Fetching prediction for ${coinSymbol}...`);
+
+        const predictionUrl = `http://127.0.0.1:8000/predict?symbol=${coinSymbol}`;
+        const predictionResponse = await fetch(predictionUrl);
+        const predictionData = await predictionResponse.json();
+
+        if (predictionData.predictions) {
+          const today = new Date();
+          const formattedPredictions = predictionData.predictions.map(
+            (price, index) => ({
+              date: today.getTime() + index * 86400000, // Add one day in milliseconds
+              price,
+              type: "Prediction",
+            })
+          );
+          setPredictedData(formattedPredictions);
+        } else {
+          console.error("Error fetching predictions:", predictionData.error);
+        }
+
+        setLoading(false); // ✅ Hide loading animation
+      }, 10000); // ✅ Wait 10 seconds for training
+    } catch (error) {
+      console.error("Error training model:", error);
+      setLoading(false);
+    }
+  };
 
   return (
     <div style={{ padding: "20px", color: "white" }}>
@@ -189,41 +207,52 @@ const CryptoDashboard = () => {
                 </tr>
               </thead>
               <tbody>
-                {cryptoData.map((coin, index) => (
-                  <tr
-                    key={index}
-                    style={{
-                      borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
-                      cursor: "pointer",
-                    }}
-                    onClick={() =>
-                      fetchHistoricalData(
-                        coin.CoinInfo.Name,
-                        coin.CoinInfo.FullName
-                      )
-                    }
-                  >
-                    <td
+                {cryptoData && cryptoData.length > 0 ? (
+                  cryptoData.map((coin, index) => (
+                    <tr
+                      key={index}
                       style={{
-                        padding: "10px 0",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "10px",
+                        borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+                        cursor: "pointer",
                       }}
+                      onClick={() =>
+                        fetchHistoricalData(
+                          coin.CoinInfo.Name,
+                          coin.CoinInfo.FullName
+                        )
+                      }
                     >
-                      {renderLogo(
-                        coin.CoinInfo.ImageUrl,
-                        coin.CoinInfo.FullName,
-                        "1.5em"
-                      )}{" "}
-                      {coin.CoinInfo.FullName} ({coin.CoinInfo.Name})
+                      <td
+                        style={{
+                          padding: "10px 0",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                        }}
+                      >
+                        {renderLogo(
+                          coin.CoinInfo.ImageUrl,
+                          coin.CoinInfo.FullName,
+                          "1.5em"
+                        )}{" "}
+                        {coin.CoinInfo.FullName} ({coin.CoinInfo.Name})
+                      </td>
+                      <td>{coin.DISPLAY?.USD?.PRICE || "N/A"}</td>
+                      <td>{coin.DISPLAY?.USD?.MKTCAP || "N/A"}</td>
+                      <td>{coin.DISPLAY?.USD?.CHANGE24HOUR || "N/A"}</td>
+                      <td>{coin.DISPLAY?.USD?.VOLUME24HOURTO || "N/A"}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td
+                      colSpan="5"
+                      style={{ textAlign: "center", color: "gray" }}
+                    >
+                      No data available.
                     </td>
-                    <td>{coin.DISPLAY?.USD?.PRICE || "N/A"}</td>
-                    <td>{coin.DISPLAY?.USD?.MKTCAP || "N/A"}</td>
-                    <td>{coin.DISPLAY?.USD?.CHANGE24HOUR || "N/A"}</td>
-                    <td>{coin.DISPLAY?.USD?.VOLUME24HOURTO || "N/A"}</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -241,8 +270,6 @@ const CryptoDashboard = () => {
         >
           <h3 style={{ textAlign: "left", marginTop: "-10px" }}>
             Graph: {selectedCoin}
-            <br />
-            Predictions: 30 Days - {predictedData && predictedData.length > 0 ? `$${parseFloat(predictedData[predictedData.length - 1].price).toFixed(2)}` : "N/A"}
           </h3>
 
           <div style={{ height: "300px", marginTop: "20px" }}>
@@ -273,31 +300,57 @@ const CryptoDashboard = () => {
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
 
-                {/* Actual Price Line (Blue) */}
-                <Line
-                  type="monotone"
-                  data={historicalData}
-                  dataKey="price"
-                  stroke="#8884d8"
-                  dot={false}
-                  strokeWidth={2}
-                  name="Actual Price"
-                />
+                {/* ✅ Only render if historicalData is available */}
+                {historicalData && historicalData.length > 0 && (
+                  <Line
+                    type="monotone"
+                    data={historicalData}
+                    dataKey="price"
+                    stroke="#8884d8"
+                    dot={false}
+                    strokeWidth={2}
+                    name="Actual Price"
+                  />
+                )}
 
-                {/* Predicted Price Line (Red) */}
-                <Line
-                  type="monotone"
-                  data={predictedData}
-                  dataKey="price"
-                  stroke="red"
-                  dot={{ stroke: "red", strokeWidth: 2 }}
-                  strokeDasharray="5 5"
-                  strokeWidth={2}
-                  name="Predicted Price"
-                />
+                {/* ✅ Only render if predictedData is available */}
+                {predictedData && predictedData.length > 0 && (
+                  <Line
+                    type="monotone"
+                    data={predictedData}
+                    dataKey="price"
+                    stroke="red"
+                    dot={{ stroke: "red", strokeWidth: 2 }}
+                    strokeDasharray="5 5"
+                    strokeWidth={2}
+                    name="Predicted Price"
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
+
+          <button
+            style={{
+              marginTop: "20px",
+              padding: "10px 20px",
+              backgroundColor: "#007bff",
+              color: "white",
+              border: "none",
+              borderRadius: "5px",
+              cursor: "pointer",
+            }}
+            onClick={() => fetchPrediction(selectedCoin)} // ✅ Triggers prediction workflow
+          >
+            Predict
+          </button>
+
+          {/* ✅ Show loading animation */}
+          {loading && (
+            <p style={{ color: "yellow", fontWeight: "bold" }}>
+              Training model... Please wait ⏳
+            </p>
+          )}
         </div>
       </div>
     </div>
