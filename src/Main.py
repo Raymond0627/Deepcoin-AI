@@ -25,7 +25,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"],
+    allow_origins=["*"],  # Allows all origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -105,11 +105,12 @@ def fetch_historical_data(symbol: str = "BTC"):
         cursor.close()
         conn.close()
 
-@app.get("/train-lstm")
-def train_lstm(symbol: str = "BTC"):
+@app.get("/predict")
+def predict(symbol: str = "BTC", days: int = 30):
+    """Train model and predict next 30 days of prices for a given cryptocurrency."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     try:
         cursor.execute(
             "SELECT price FROM crypto_prices WHERE symbol=%s ORDER BY timestamp ASC;",
@@ -117,9 +118,9 @@ def train_lstm(symbol: str = "BTC"):
         )
         rows = cursor.fetchall()
         
-        if not rows:
-            return {"error": f"No data available for {symbol}"}
-        
+        if not rows or len(rows) < 30:
+            raise HTTPException(status_code=400, detail=f"Not enough {symbol} data for prediction!")
+
         prices = np.array([row[0] for row in rows], dtype=np.float32).reshape(-1, 1)
         scaler = MinMaxScaler()
         scaled_prices = scaler.fit_transform(prices)
@@ -132,6 +133,7 @@ def train_lstm(symbol: str = "BTC"):
         
         X, y = np.array(X), np.array(y)
         
+        # Create and train the model
         model = Sequential([
             LSTM(64, return_sequences=True, input_shape=(sequence_length, 1)),
             LSTM(64, return_sequences=False),
@@ -141,55 +143,16 @@ def train_lstm(symbol: str = "BTC"):
         model.compile(optimizer="adam", loss="mse")
         model.fit(X, y, epochs=100, batch_size=4, verbose=0)
         
-        return {"message": f"LSTM model trained for {symbol}"}
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.get("/predict")
-def predict(symbol: str = "BTC", days: int = 30):
-    """Predict next 30 days of prices for a given cryptocurrency."""
-    model_path = f"lstm_model_{symbol}.keras"
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "SELECT price FROM crypto_prices WHERE symbol=%s ORDER BY timestamp DESC LIMIT 30;",
-            (symbol,),
-        )
-        rows = cursor.fetchall()
-
-        if len(rows) < 30:
-            raise HTTPException(status_code=400, detail=f"Not enough {symbol} data for prediction!")
-
-        # Reverse the data to get chronological order
-        prices = np.array([row[0] for row in rows])[::-1]
-
-        # If model doesn't exist, train one
-        if not os.path.exists(model_path):
-            train_response = train_lstm(symbol)
-            # Optionally log or handle the training response here
-
-        model = keras.models.load_model(model_path)
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(prices.reshape(-1, 1))
-
+        # Generate predictions
         predictions = []
-        # Start with the last available input
-        last_input = scaled_data[-1].reshape(1, 1, 1)
+        last_input = X[-1].reshape(1, sequence_length, 1)  # Use the last sequence as starting point
 
         for _ in range(days):
             predicted_scaled = model.predict(last_input, verbose=0)
             predicted_price = scaler.inverse_transform(predicted_scaled)[0][0]
             predictions.append(float(predicted_price))
-            # Use the prediction as the next input
-            last_input = predicted_scaled.reshape(1, 1, 1)
+            # Update input for next prediction
+            last_input = np.append(last_input[:, 1:, :], predicted_scaled.reshape(1, 1, 1), axis=1)
 
         return {"symbol": symbol, "predictions": predictions}
 

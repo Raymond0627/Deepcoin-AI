@@ -102,6 +102,7 @@ const CryptoDashboard = () => {
     fetchCryptoData();
   }, []);
 
+
   const fetchHistoricalData = async (coinSymbol, coinFullName) => {
     setLoading(true);
     setPredictedData([]); // Clear previous predictions
@@ -142,14 +143,13 @@ const CryptoDashboard = () => {
       setSelectedCoin(coinFullName); // Store full name (e.g., Bitcoin)
       setSelectedCoinSymbol(coinSymbol); // Store short symbol (e.g., BTC)
 
-      console.log(`🚀 Training LSTM model for ${coinSymbol}...`);
-      await fetch(`http://127.0.0.1:8000/train-lstm?symbol=${coinSymbol}`);
+      console.log(`✅ Historical data loaded for ${coinSymbol}`);
     } catch (error) {
-      console.error("❌ Error fetching historical data or training:", error);
+      console.error("❌ Error fetching historical data:", error);
     }
     setLoading(false);
   };
-
+  
   // Function to trigger prediction
   const fetchPrediction = async () => {
     setLoadingPrediction(true);
