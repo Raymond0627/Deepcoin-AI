@@ -57,7 +57,7 @@ const CryptoDashboard = () => {
     />
   );
 
-  // ✅ crypto data
+  // ✅ crypto data for coin prices this code gets the data like coin names and current price 
   useEffect(() => {
     const fetchCryptoData = async () => {
       try {
@@ -117,44 +117,6 @@ const CryptoDashboard = () => {
       setSelectedCoin(coinFullName);
     } catch (error) {
       console.error("Error fetching historical data:", error);
-    }
-  };
-
-  // ✅ fetch prediction
-  const fetchPrediction = async (coinSymbol) => {
-    setLoading(true); //Show loading animation
-
-    try {
-      console.log(`🚀 Training model for ${coinSymbol}...`);
-      await fetch(`http://127.0.0.1:8000/train-lstm?symbol=${coinSymbol}`);
-
-      // ✅ Wait a few seconds, then fetch prediction
-      setTimeout(async () => {
-        console.log(`📊 Fetching prediction for ${coinSymbol}...`);
-
-        const predictionUrl = `http://127.0.0.1:8000/predict?symbol=${coinSymbol}`;
-        const predictionResponse = await fetch(predictionUrl);
-        const predictionData = await predictionResponse.json();
-
-        if (predictionData.predictions) {
-          const today = new Date();
-          const formattedPredictions = predictionData.predictions.map(
-            (price, index) => ({
-              date: today.getTime() + index * 86400000, // Add one day in milliseconds
-              price,
-              type: "Prediction",
-            })
-          );
-          setPredictedData(formattedPredictions);
-        } else {
-          console.error("Error fetching predictions:", predictionData.error);
-        }
-
-        setLoading(false); // ✅ Hide loading animation
-      }, 10000); // ✅ Wait 10 seconds for training
-    } catch (error) {
-      console.error("Error training model:", error);
-      setLoading(false);
     }
   };
 
@@ -329,28 +291,6 @@ const CryptoDashboard = () => {
               </LineChart>
             </ResponsiveContainer>
           </div>
-
-          <button
-            style={{
-              marginTop: "20px",
-              padding: "10px 20px",
-              backgroundColor: "#007bff",
-              color: "white",
-              border: "none",
-              borderRadius: "5px",
-              cursor: "pointer",
-            }}
-            onClick={() => fetchPrediction(selectedCoin)} // ✅ Triggers prediction workflow
-          >
-            Predict
-          </button>
-
-          {/* ✅ Show loading animation */}
-          {loading && (
-            <p style={{ color: "yellow", fontWeight: "bold" }}>
-              Training model... Please wait ⏳
-            </p>
-          )}
         </div>
       </div>
     </div>
