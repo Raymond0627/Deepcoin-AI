@@ -282,10 +282,11 @@ const CryptoDashboard = () => {
                     data={predictedData}
                     dataKey="price"
                     stroke="red"
-                    dot={{ stroke: "red", strokeWidth: 2 }}
+                    dot={false}
                     strokeDasharray="5 5"
                     strokeWidth={2}
                     name="Predicted Price"
+                    
                   />
                 )}
               </LineChart>
