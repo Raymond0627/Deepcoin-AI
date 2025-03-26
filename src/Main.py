@@ -4,18 +4,16 @@ import os
 import requests
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
 
-# Validate required environment variables
 DATABASE_URL = os.getenv("DATABASE_URL")
 CRYPTOCOMPARE_API_KEY = os.getenv("CRYPTOCOMPARE_API_KEY")
 CRYPTO_API_URL = "https://min-api.cryptocompare.com/data/v2/histoday"
@@ -23,98 +21,127 @@ CRYPTO_API_URL = "https://min-api.cryptocompare.com/data/v2/histoday"
 if not DATABASE_URL or not CRYPTOCOMPARE_API_KEY:
     raise EnvironmentError("Missing required environment variables.")
 
-# Initialize FastAPI app
 app = FastAPI()
 
-# ✅ Enable CORS to allow frontend requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"],  # ✅ Allows React frontend
+    allow_origins=["http://localhost:3001"],
     allow_credentials=True,
-    allow_methods=["*"],  # ✅ Allows all HTTP methods
-    allow_headers=["*"],  # ✅ Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-@app.get("/")
-def home():
-    return {"message": "DeepCoin AI is running! 🚀"}
-
 def get_db_connection():
-    """Create a new database connection."""
     try:
         return psycopg2.connect(DATABASE_URL)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
 
+# Fetch historical data from CryptoCompare and store it in the database
+def fetch_and_store_crypto_data(symbol):
+    try:
+        response = requests.get(
+            f"{CRYPTO_API_URL}?fsym={symbol}&tsym=USD&limit=30&api_key={CRYPTOCOMPARE_API_KEY}"
+        )
+        data = response.json()
+
+        if data.get("Response") != "Success":
+            raise HTTPException(status_code=500, detail=f"CryptoCompare API error: {data.get('Message')}")
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        for item in data["Data"]["Data"]:
+            timestamp = datetime.utcfromtimestamp(item["time"])
+            price = item["close"]
+            cursor.execute(
+                "INSERT INTO crypto_prices (symbol, price, timestamp) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING;",
+                (symbol, price, timestamp),
+            )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching or storing data: {str(e)}")
+
 @app.get("/fetch-historical-data")
 def fetch_historical_data(symbol: str = "BTC"):
-    """Fetches & returns historical price data from the database."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
     try:
+        # Check latest stored data
+        cursor.execute(
+            "SELECT price, timestamp FROM crypto_prices WHERE symbol=%s ORDER BY timestamp DESC LIMIT 1;",
+            (symbol,),
+        )
+        row = cursor.fetchone()
+
+        if row:
+            latest_timestamp = row[1]
+            current_time = datetime.utcnow()
+
+            # If data is outdated (>24 hours old), fetch new data
+            if (current_time - latest_timestamp) > timedelta(days=1):
+                fetch_and_store_crypto_data(symbol)
+        else:
+            # If no data exists, fetch from CryptoCompare
+            fetch_and_store_crypto_data(symbol)
+
+        # Fetch updated data
         cursor.execute(
             "SELECT price, timestamp FROM crypto_prices WHERE symbol=%s ORDER BY timestamp ASC;",
             (symbol,),
         )
         rows = cursor.fetchall()
-
+        
         if not rows:
-            return {"error": f"No historical data found for {symbol}"}
+            raise HTTPException(status_code=404, detail=f"No historical data available for {symbol}")
 
         data = [{"price": row[0], "timestamp": row[1].isoformat()} for row in rows]
-
-        return data  # ✅ Returns correct JSON format
-    
+        return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
     finally:
         cursor.close()
         conn.close()
 
 @app.get("/train-lstm")
 def train_lstm(symbol: str = "BTC"):
-    """Train an LSTM model using past 30 days of selected cryptocurrency."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
+    
     try:
         cursor.execute(
-            "SELECT price FROM crypto_prices WHERE symbol=%s ORDER BY timestamp DESC LIMIT 30;",
+            "SELECT price FROM crypto_prices WHERE symbol=%s ORDER BY timestamp ASC;",
             (symbol,),
         )
         rows = cursor.fetchall()
-
-        if len(rows) < 30:
-            raise HTTPException(status_code=400, detail=f"Not enough {symbol} data to train the model (Need at least 30 days)")
-
-        prices = np.array([row[0] for row in rows])[::-1]  # Reverse order for time-series
-
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(prices.reshape(-1, 1))
-
-        X_train, y_train = [], []
-        for i in range(len(scaled_data) - 1):
-            X_train.append(scaled_data[i])
-            y_train.append(scaled_data[i + 1])
-
-        X_train, y_train = np.array(X_train), np.array(y_train)
-        X_train = X_train.reshape((X_train.shape[0], 1, X_train.shape[1]))
-
+        
+        if not rows:
+            return {"error": f"No data available for {symbol}"}
+        
+        prices = np.array([row[0] for row in rows], dtype=np.float32).reshape(-1, 1)
+        scaler = MinMaxScaler()
+        scaled_prices = scaler.fit_transform(prices)
+        
+        sequence_length = 10
+        X, y = [], []
+        for i in range(len(scaled_prices) - sequence_length):
+            X.append(scaled_prices[i:i+sequence_length])
+            y.append(scaled_prices[i+sequence_length])
+        
+        X, y = np.array(X), np.array(y)
+        
         model = Sequential([
-            keras.layers.Input(shape=(1, 1)),
-            LSTM(50, return_sequences=True),
-            LSTM(50),
+            LSTM(64, return_sequences=True, input_shape=(sequence_length, 1)),
+            LSTM(64, return_sequences=False),
+            Dense(32, activation='relu'),
             Dense(1)
         ])
-        model.compile(optimizer='adam', loss='mean_squared_error')
-
-        model.fit(X_train, y_train, epochs=20, batch_size=1, verbose=0)
-
-        model.save(f"lstm_model_{symbol}.keras")
-
-        return {"message": f"LSTM model trained and saved successfully for {symbol}!"}
+        model.compile(optimizer="adam", loss="mse")
+        model.fit(X, y, epochs=100, batch_size=4, verbose=0)
+        
+        return {"message": f"LSTM model trained for {symbol}"}
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -122,7 +149,6 @@ def train_lstm(symbol: str = "BTC"):
     finally:
         cursor.close()
         conn.close()
-
 
 @app.get("/predict")
 def predict(symbol: str = "BTC", days: int = 30):
