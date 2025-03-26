@@ -11,15 +11,15 @@ import {
 } from "recharts";
 
 const CustomTooltip = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload; // Get full data object
-      const timestamp = new Date(data.date); // Convert raw timestamp to Date object
-  
-      // Ensure valid date
-      if (isNaN(timestamp)) return null;
-  
-      const formattedDate = timestamp.toLocaleDateString();
-  
+  if (active && payload && payload.length) {
+    const data = payload[0].payload; // Get full data object
+    const timestamp = new Date(data.date); // Convert raw timestamp to Date object
+
+    // Ensure valid date
+    if (isNaN(timestamp)) return null;
+
+    const formattedDate = timestamp.toLocaleDateString();
+
     return (
       <div
         style={{
@@ -35,16 +35,16 @@ const CustomTooltip = ({ active, payload }) => {
         <p>{`Price: $${data.price}`}</p>
       </div>
     );
-    }
-    return null;
-  };
-  
-  
+  }
+  return null;
+};
+
 const CryptoDashboard = () => {
   const [cryptoData, setCryptoData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [historicalData, setHistoricalData] = useState([]);
   const [selectedCoin, setSelectedCoin] = useState("");
+  const [predictedData, setPredictedData] = useState([]);
 
   const API_KEY =
     "eb87f295a75b763038e0c1583274e3279af5570b41b6a932a4fa5e24e9bded05";
@@ -98,37 +98,44 @@ const CryptoDashboard = () => {
 
   const fetchHistoricalData = async (coinSymbol, coinFullName) => {
     try {
-      const baseUrl = `https://min-api.cryptocompare.com/data/v2/histoday`;
-      const params = {
-        fsym: coinSymbol,
-        tsym: "USD",
-        limit: "30",
-        api_key: API_KEY,
-      };
-      const url = new URL(baseUrl);
-      url.search = new URLSearchParams(params).toString();
-
-      const options = {
-        method: "GET",
-        headers: { "Content-type": "application/json; charset=UTF-8" },
-      };
-      const response = await fetch(url, options);
-      const data = await response.json();
-
-      if (data.Response === "Success") {
-        const formattedData = data.Data.Data.map((item) => ({
-          date: item.time * 1000, // Store raw timestamp
+      // Fetch historical data
+      const historyUrl = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${coinSymbol}&tsym=USD&limit=30&api_key=${API_KEY}`;
+      const historyResponse = await fetch(historyUrl);
+      const historyData = await historyResponse.json();
+  
+      if (historyData.Response === "Success") {
+        const formattedHistory = historyData.Data.Data.map((item) => ({
+          date: item.time * 1000, // Convert to timestamp
           price: item.close,
         }));
-        setHistoricalData(formattedData);
-        setSelectedCoin(coinFullName);
+        setHistoricalData(formattedHistory);
       } else {
-        console.error("Error fetching historical data:", data.Message);
+        console.error("Error fetching historical data:", historyData.Message);
       }
+  
+      // Fetch AI Predictions from FastAPI
+      const predictionUrl = `http://127.0.0.1:8000/predict?symbol=${coinSymbol}`;
+      const predictionResponse = await fetch(predictionUrl);
+      const predictionData = await predictionResponse.json();
+  
+      if (predictionData.predictions) {
+        const today = new Date();
+        const formattedPredictions = predictionData.predictions.map((price, index) => ({
+          date: today.getTime() + index * 86400000, // Add one day in milliseconds
+          price: price, // Ensure price is stored correctly
+        }));
+        setPredictedData(formattedPredictions);
+        console.log("Predictions Updated:", formattedPredictions);
+      } else {
+        console.error("Error fetching predictions:", predictionData.error);
+      }
+  
+      setSelectedCoin(coinFullName);
     } catch (error) {
-      console.error("Error fetching historical data:", error);
+      console.error("Error fetching data:", error);
     }
   };
+  
 
   if (loading) return <div>Loading...</div>;
   if (!cryptoData) return <div>No data available.</div>;
@@ -232,12 +239,15 @@ const CryptoDashboard = () => {
             boxShadow: "0 4px 8px rgba(0, 0, 0, 0.5)",
           }}
         >
-          <h2 style={{ textAlign: "left", marginTop: "-10px" }}>
+          <h3 style={{ textAlign: "left", marginTop: "-10px" }}>
             Graph: {selectedCoin}
-          </h2>
+            <br />
+            Predictions: 30 Days - {predictedData && predictedData.length > 0 ? `$${parseFloat(predictedData[predictedData.length - 1].price).toFixed(2)}` : "N/A"}
+          </h3>
+
           <div style={{ height: "300px", marginTop: "20px" }}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={historicalData}>
+              <LineChart>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis
                   dataKey="date"
@@ -262,12 +272,28 @@ const CryptoDashboard = () => {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
+
+                {/* Actual Price Line (Blue) */}
                 <Line
                   type="monotone"
+                  data={historicalData}
                   dataKey="price"
                   stroke="#8884d8"
                   dot={false}
                   strokeWidth={2}
+                  name="Actual Price"
+                />
+
+                {/* Predicted Price Line (Red) */}
+                <Line
+                  type="monotone"
+                  data={predictedData}
+                  dataKey="price"
+                  stroke="red"
+                  dot={{ stroke: "red", strokeWidth: 2 }}
+                  strokeDasharray="5 5"
+                  strokeWidth={2}
+                  name="Predicted Price"
                 />
               </LineChart>
             </ResponsiveContainer>
