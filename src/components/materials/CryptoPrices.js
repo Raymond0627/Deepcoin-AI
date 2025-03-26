@@ -98,27 +98,60 @@ const CryptoDashboard = () => {
   }, []);
 
   const fetchHistoricalData = async (coinSymbol, coinFullName) => {
+    setLoading(true);
+  
     try {
-      // ✅ Fetch historical data
-      const historyUrl = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${coinSymbol}&tsym=USD&limit=30&api_key=${API_KEY}`;
-      const historyResponse = await fetch(historyUrl);
-      const historyData = await historyResponse.json();
-
-      if (historyData.Response === "Success") {
-        const formattedHistory = historyData.Data.Data.map((item) => ({
-          date: item.time * 1000, // Convert to timestamp
-          price: item.close,
-        }));
-        setHistoricalData(formattedHistory);
-      } else {
-        console.error("Error fetching historical data:", historyData.Message);
+      console.log(`🔄 Fetching historical data for ${coinSymbol}...`);
+  
+      // ✅ Fetch historical data from PostgreSQL via FastAPI
+      const dbHistoryResponse = await fetch(`http://127.0.0.1:8000/fetch-historical-data?symbol=${coinSymbol}`);
+      
+      if (!dbHistoryResponse.ok) {
+        throw new Error(`Failed to fetch historical data: ${dbHistoryResponse.statusText}`);
       }
-
+  
+      const dbHistoryData = await dbHistoryResponse.json();
+  
+      if (dbHistoryData.error) {
+        console.error("❌ Error fetching historical data:", dbHistoryData.error);
+        setLoading(false);
+        return;
+      }
+  
+      console.log("✅ Historical data fetched:", dbHistoryData);
+  
+      // ✅ Convert ISO timestamp to milliseconds
+      const formattedHistory = dbHistoryData.map((item) => ({
+        date: new Date(item.timestamp).getTime(), 
+        price: item.price,
+      }));
+  
+      setHistoricalData(formattedHistory);
       setSelectedCoin(coinFullName);
+  
+      // ✅ Trigger training after fetching data
+      console.log(`🚀 Training LSTM model for ${coinSymbol}...`);
+      const trainResponse = await fetch(`http://127.0.0.1:8000/train-lstm?symbol=${coinSymbol}`);
+  
+      if (!trainResponse.ok) {
+        throw new Error(`Training failed: ${trainResponse.statusText}`);
+      }
+  
+      const trainData = await trainResponse.json();
+  
+      if (trainData.error) {
+        console.error("❌ Error training model:", trainData.error);
+      } else {
+        console.log("✅ Training started:", trainData);
+      }
+  
     } catch (error) {
-      console.error("Error fetching historical data:", error);
+      console.error("❌ Error fetching historical data or training:", error);
     }
+  
+    setLoading(false);
   };
+  
 
   return (
     <div style={{ padding: "20px", color: "white" }}>
@@ -282,7 +315,7 @@ const CryptoDashboard = () => {
                     data={predictedData}
                     dataKey="price"
                     stroke="red"
-                    dot={false}
+                    dot={{ stroke: "red", strokeWidth: 2 }}
                     strokeDasharray="5 5"
                     strokeWidth={2}
                     name="Predicted Price"
