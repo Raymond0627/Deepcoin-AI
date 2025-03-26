@@ -390,9 +390,8 @@ const CryptoDashboard = () => {
                     type="monotone"
                     data={predictedData}
                     dataKey="price"
-                    stroke="red"
-                    dot={{ stroke: "red", strokeWidth: 2 }}
-                    strokeDasharray="5 5"
+                    stroke="green"
+                    dot={false}
                     strokeWidth={2}
                     name="Predicted Price"
                   />
