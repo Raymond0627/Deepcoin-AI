@@ -11,19 +11,28 @@ from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
+
+
 
 # Load environment variables
 load_dotenv()
 
+# Ensure required environment variables are set
+if not os.getenv("DATABASE_URL"):
+    raise EnvironmentError("DATABASE_URL is not set in the environment variables.")
+if not os.getenv("CRYPTOCOMPARE_API_KEY"):
+    raise EnvironmentError("CRYPTOCOMPARE_API_KEY is not set in the environment variables.")
+
 app = FastAPI()
 
-# Enable CORS to allow frontend to access API
+# Enable CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Allow React frontend
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # PostgreSQL Connection
@@ -42,28 +51,47 @@ def home():
 
 @app.get("/fetch-historical-data")
 def fetch_historical_data(symbol: str = "BTC"):
-    """Fetch last 30 days of price data for a given cryptocurrency and store it in PostgreSQL."""
-    url = f"{CRYPTO_API_URL}?fsym={symbol}&tsym=USD&limit=30&api_key={CRYPTOCOMPARE_API_KEY}"
-    response = requests.get(url)
+    """Fetches & updates historical price data for a given cryptocurrency."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # ✅ Check last stored timestamp for this symbol
+    cursor.execute(
+        "SELECT MAX(timestamp) FROM crypto_prices WHERE symbol=%s;", (symbol,)
+    )
+    last_timestamp = cursor.fetchone()[0]
+
+    # Convert to UNIX timestamp (seconds) if exists, else fetch full 30 days
+    last_timestamp = int(last_timestamp.timestamp()) if last_timestamp else None
+
+    # ✅ Fetch only missing data (if outdated)
+    params = {
+        "fsym": symbol,
+        "tsym": "USD",
+        "limit": 30 if last_timestamp is None else 1,  # If first fetch, get 30 days; otherwise, fetch last missing day
+        "api_key": CRYPTOCOMPARE_API_KEY,
+    }
+    response = requests.get(CRYPTO_API_URL, params=params)
     data = response.json()
 
     if "Data" in data and "Data" in data["Data"]:
         prices = [(day["time"], day["close"]) for day in data["Data"]["Data"]]
 
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
         for timestamp, price in prices:
+            # ✅ Skip inserting duplicate timestamps
+            if last_timestamp and timestamp <= last_timestamp:
+                continue  
+
             cursor.execute(
                 "INSERT INTO crypto_prices (symbol, price, timestamp) VALUES (%s, %s, TO_TIMESTAMP(%s))",
-                (symbol, price, timestamp)
+                (symbol, price, timestamp),
             )
 
         conn.commit()
         cursor.close()
         conn.close()
 
-        return {"message": f"30 days of {symbol} price data stored successfully!"}
+        return {"message": f"Updated {symbol} price data successfully!"}
     else:
         return {"error": f"Failed to fetch data for {symbol}"}
 
@@ -72,7 +100,10 @@ def train_lstm(symbol: str = "BTC"):
     """Train an LSTM model using past 30 days of selected cryptocurrency."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT price FROM crypto_prices WHERE symbol=%s ORDER BY timestamp DESC LIMIT 30;", (symbol,))
+    cursor.execute(
+        "SELECT price FROM crypto_prices WHERE symbol=%s ORDER BY timestamp DESC LIMIT 30;",
+        (symbol,),
+    )
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -97,7 +128,8 @@ def train_lstm(symbol: str = "BTC"):
 
     # Build LSTM Model
     model = Sequential([
-        LSTM(50, return_sequences=True, input_shape=(1, 1)),
+        keras.layers.Input(shape=(1, 1)),  # Use Input layer
+        LSTM(50, return_sequences=True),
         LSTM(50),
         Dense(1)
     ])
@@ -107,16 +139,16 @@ def train_lstm(symbol: str = "BTC"):
     model.fit(X_train, y_train, epochs=20, batch_size=1)
 
     # Save model dynamically
-    model.save(f"lstm_model_{symbol}.h5")
+    model.save(f"lstm_model_{symbol}.keras")
 
     return {"message": f"LSTM model trained and saved successfully for {symbol}!"}
 
 @app.get("/predict")
 def predict(symbol: str = "BTC", days: int = 30):
-    """Predict next 30 days of prices for a given cryptocurrency. Auto-fetch & train if needed."""
-    model_path = f"lstm_model_{symbol}.h5"
+    """Predict next 30 days of prices for a given cryptocurrency."""
+    model_path = f"lstm_model_{symbol}.keras"
 
-    # ✅ Step 1: Fetch Data if Not Enough Data Exists
+    # ✅ Fetch data if needed
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM crypto_prices WHERE symbol=%s;", (symbol,))
@@ -124,9 +156,12 @@ def predict(symbol: str = "BTC", days: int = 30):
 
     if row_count < 30:
         print(f"🔄 Not enough {symbol} data, fetching new data...")
-        fetch_historical_data(symbol)  # ✅ Fetch data if needed
+        fetch_historical_data(symbol)  
 
-    cursor.execute("SELECT price FROM crypto_prices WHERE symbol=%s ORDER BY timestamp DESC LIMIT 30;", (symbol,))
+    cursor.execute(
+        "SELECT price FROM crypto_prices WHERE symbol=%s ORDER BY timestamp DESC LIMIT 30;",
+        (symbol,),
+    )
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -134,14 +169,14 @@ def predict(symbol: str = "BTC", days: int = 30):
     if len(rows) < 30:
         return {"error": f"Still not enough {symbol} data after fetching!"}
 
-    # ✅ Step 2: Train Model if It Doesn't Exist
+    # ✅ Train model if missing
     if not os.path.exists(model_path):
         print(f"🚀 Model for {symbol} not found, training a new one...")
-        train_lstm(symbol)  # ✅ Train model automatically
+        train_lstm(symbol)  
 
-    # ✅ Step 3: Load Model & Make Predictions
+    # ✅ Load Model & Predict
     model = keras.models.load_model(model_path)
-    prices = np.array([row[0] for row in rows])[::-1]  # Reverse time-series order
+    prices = np.array([row[0] for row in rows])[::-1]  
 
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(prices.reshape(-1, 1))
@@ -152,7 +187,7 @@ def predict(symbol: str = "BTC", days: int = 30):
     for _ in range(days):
         predicted_scaled = model.predict(last_input)
         predicted_price = scaler.inverse_transform(predicted_scaled)[0][0]
-        predictions.append(float(predicted_price))  # ✅ Convert NumPy float32 to Python float
+        predictions.append(float(predicted_price))  
 
         last_input = predicted_scaled.reshape(1, 1, 1)
 
