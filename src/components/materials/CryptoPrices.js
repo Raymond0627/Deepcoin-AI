@@ -15,9 +15,7 @@ const CustomTooltip = ({ active, payload }) => {
     const data = payload[0].payload; // Get full data object
     const timestamp = new Date(data.date); // Convert raw timestamp to Date object
 
-    // Ensure valid date
     if (isNaN(timestamp)) return null;
-
     const formattedDate = timestamp.toLocaleDateString();
 
     return (
@@ -43,10 +41,11 @@ const CryptoDashboard = () => {
   const [cryptoData, setCryptoData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [historicalData, setHistoricalData] = useState([]);
-  const [selectedCoin, setSelectedCoin] = useState("");
   const [predictedData, setPredictedData] = useState([]);
   const [loadingPrediction, setLoadingPrediction] = useState(false);
   const [predictedPrice, setPredictedPrice] = useState(null);
+  const [selectedCoin, setSelectedCoin] = useState(""); // Full name (e.g., Bitcoin)
+  const [selectedCoinSymbol, setSelectedCoinSymbol] = useState(""); // Short symbol (e.g., BTC)
 
   const API_KEY =
     "eb87f295a75b763038e0c1583274e3279af5570b41b6a932a4fa5e24e9bded05";
@@ -59,7 +58,7 @@ const CryptoDashboard = () => {
     />
   );
 
-  // ✅ Crypto data for coin prices (gets coin names and current price)
+  // Fetch crypto data for coin names and prices
   useEffect(() => {
     const fetchCryptoData = async () => {
       try {
@@ -84,8 +83,11 @@ const CryptoDashboard = () => {
 
         if (data.Message === "Success") {
           setCryptoData(data.Data);
-          // Fetch historical data for the first coin by default
-          fetchHistoricalData(data.Data[0].CoinInfo.Name, data.Data[0].CoinInfo.FullName);
+          // By default, select the first coin
+          fetchHistoricalData(
+            data.Data[0].CoinInfo.Name,
+            data.Data[0].CoinInfo.FullName
+          );
           setSelectedCoin(data.Data[0].CoinInfo.FullName);
         } else {
           console.error("Error fetching crypto data:", data.Message);
@@ -102,11 +104,14 @@ const CryptoDashboard = () => {
 
   const fetchHistoricalData = async (coinSymbol, coinFullName) => {
     setLoading(true);
+    setPredictedData([]); // Clear previous predictions
+    setPredictedPrice(null);
 
     try {
-      console.log(`🔄 Fetching historical data for ${coinSymbol}...`);
+      console.log(
+        `🔄 Fetching historical data for ${coinSymbol} (${coinFullName})...`
+      );
 
-      // ✅ Fetch historical data from PostgreSQL via FastAPI
       const dbHistoryResponse = await fetch(
         `http://127.0.0.1:8000/fetch-historical-data?symbol=${coinSymbol}`
       );
@@ -120,55 +125,41 @@ const CryptoDashboard = () => {
       const dbHistoryData = await dbHistoryResponse.json();
 
       if (dbHistoryData.error) {
-        console.error("❌ Error fetching historical data:", dbHistoryData.error);
+        console.error(
+          "❌ Error fetching historical data:",
+          dbHistoryData.error
+        );
         setLoading(false);
         return;
       }
 
-      console.log("✅ Historical data fetched:", dbHistoryData);
-
-      // ✅ Convert ISO timestamp to milliseconds
       const formattedHistory = dbHistoryData.map((item) => ({
         date: new Date(item.timestamp).getTime(),
         price: item.price,
       }));
 
       setHistoricalData(formattedHistory);
-      setSelectedCoin(coinFullName);
+      setSelectedCoin(coinFullName); // Store full name (e.g., Bitcoin)
+      setSelectedCoinSymbol(coinSymbol); // Store short symbol (e.g., BTC)
 
-      // ✅ Trigger training after fetching data
       console.log(`🚀 Training LSTM model for ${coinSymbol}...`);
-      const trainResponse = await fetch(
-        `http://127.0.0.1:8000/train-lstm?symbol=${coinSymbol}`
-      );
-
-      if (!trainResponse.ok) {
-        throw new Error(`Training failed: ${trainResponse.statusText}`);
-      }
-
-      const trainData = await trainResponse.json();
-
-      if (trainData.error) {
-        console.error("❌ Error training model:", trainData.error);
-      } else {
-        console.log("✅ Training started:", trainData);
-      }
+      await fetch(`http://127.0.0.1:8000/train-lstm?symbol=${coinSymbol}`);
     } catch (error) {
       console.error("❌ Error fetching historical data or training:", error);
     }
-
     setLoading(false);
   };
 
-  // ✅ Function to trigger prediction
+  // Function to trigger prediction
   const fetchPrediction = async () => {
     setLoadingPrediction(true);
-    setPredictedPrice(null); // Reset previous prediction
+    setPredictedPrice(null);
 
     try {
-      console.log(`📡 Fetching prediction for ${selectedCoin}...`);
+      console.log(`📡 Fetching prediction for ${selectedCoinSymbol}...`);
+
       const response = await fetch(
-        `http://127.0.0.1:8000/predict?symbol=${selectedCoin}`
+        `http://127.0.0.1:8000/predict?symbol=${selectedCoinSymbol}`
       );
 
       if (!response.ok) {
@@ -181,7 +172,7 @@ const CryptoDashboard = () => {
       if (data.predictions && data.predictions.length > 0) {
         const today = new Date();
         const formattedPredictions = data.predictions.map((price, index) => ({
-          date: today.getTime() + index * 86400000, // Add one day per prediction
+          date: today.getTime() + index * 86400000, // Add 1 day per prediction
           price,
           type: "Prediction",
         }));
@@ -209,6 +200,7 @@ const CryptoDashboard = () => {
           justifyContent: "space-between",
         }}
       >
+        {/* Left Panel: List of Coins */}
         <div
           style={{
             flex: "2",
@@ -259,8 +251,8 @@ const CryptoDashboard = () => {
                       }}
                       onClick={() =>
                         fetchHistoricalData(
-                          coin.CoinInfo.Name,
-                          coin.CoinInfo.FullName
+                          coin.CoinInfo.Name, // short symbol, e.g., "ETH"
+                          coin.CoinInfo.FullName // full name, e.g., "Ethereum"
                         )
                       }
                     >
@@ -287,7 +279,10 @@ const CryptoDashboard = () => {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="5" style={{ textAlign: "center", color: "gray" }}>
+                    <td
+                      colSpan="5"
+                      style={{ textAlign: "center", color: "gray" }}
+                    >
                       No data available.
                     </td>
                   </tr>
@@ -297,6 +292,7 @@ const CryptoDashboard = () => {
           </div>
         </div>
 
+        {/* Right Panel: Graph & Predict Button */}
         <div
           style={{
             flex: "1",
@@ -376,7 +372,6 @@ const CryptoDashboard = () => {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
-
                 {/* Render historical data */}
                 {historicalData && historicalData.length > 0 && (
                   <Line
@@ -389,7 +384,6 @@ const CryptoDashboard = () => {
                     name="Actual Price"
                   />
                 )}
-
                 {/* Render predicted data */}
                 {predictedData && predictedData.length > 0 && (
                   <Line
