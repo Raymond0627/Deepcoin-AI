@@ -102,7 +102,6 @@ const CryptoDashboard = () => {
     fetchCryptoData();
   }, []);
 
-
   const fetchHistoricalData = async (coinSymbol, coinFullName) => {
     setLoading(true);
     setPredictedData([]); // Clear previous predictions
@@ -149,7 +148,7 @@ const CryptoDashboard = () => {
     }
     setLoading(false);
   };
-  
+
   // Function to trigger prediction
   const fetchPrediction = async () => {
     setLoadingPrediction(true);
@@ -171,11 +170,28 @@ const CryptoDashboard = () => {
 
       if (data.predictions && data.predictions.length > 0) {
         const today = new Date();
-        const formattedPredictions = data.predictions.map((price, index) => ({
-          date: today.getTime() + index * 86400000, // Add 1 day per prediction
-          price,
-          type: "Prediction",
-        }));
+        let lastKnownDate = new Date(
+          historicalData[historicalData.length - 1]?.date || today
+        );
+        let lastKnownPrice =
+          historicalData[historicalData.length - 1]?.price || 0;
+
+        // Include the last known historical data point as the first predicted point
+        const formattedPredictions = [
+          {
+            date: lastKnownDate.getTime(),
+            price: lastKnownPrice, // Ensures connection from last real price
+            type: "Prediction Start",
+          },
+          ...data.predictions.map((price, index) => {
+            lastKnownDate.setDate(lastKnownDate.getDate() + 1);
+            return {
+              date: lastKnownDate.getTime(),
+              price: price,
+              type: "Prediction",
+            };
+          }),
+        ];
 
         setPredictedData(formattedPredictions);
         setPredictedPrice(
@@ -355,6 +371,17 @@ const CryptoDashboard = () => {
                   tickFormatter={(timestamp) =>
                     new Date(timestamp).toLocaleDateString()
                   }
+                  domain={[
+                    Math.min(
+                      ...historicalData.map((d) => d.date),
+                      ...predictedData.map((d) => d.date)
+                    ),
+                    Math.max(
+                      ...historicalData.map((d) => d.date),
+                      ...predictedData.map((d) => d.date)
+                    ),
+                  ]}
+                  type="number" // Ensure the X-axis treats dates as numbers for proper scaling
                   label={{
                     value: "Date",
                     position: "insideBottom",
@@ -372,7 +399,8 @@ const CryptoDashboard = () => {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
-                {/* Render historical data */}
+
+                {/* Render historical data as blue */}
                 {historicalData && historicalData.length > 0 && (
                   <Line
                     type="monotone"
@@ -384,15 +412,17 @@ const CryptoDashboard = () => {
                     name="Actual Price"
                   />
                 )}
-                {/* Render predicted data */}
+
+                {/* Render predicted data as green */}
                 {predictedData && predictedData.length > 0 && (
                   <Line
                     type="monotone"
                     data={predictedData}
                     dataKey="price"
-                    stroke="green"
+                    stroke="#32CD32"
                     dot={false}
                     strokeWidth={2}
+                    strokeDasharray="5 5"
                     name="Predicted Price"
                   />
                 )}
