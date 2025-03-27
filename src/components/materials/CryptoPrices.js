@@ -9,6 +9,8 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import FetchingPrediction from "./typewriter";
+import { MoveCenter } from "@tsparticles/engine";
 
 const CustomTooltip = ({ active, payload }) => {
   if (active && payload && payload.length) {
@@ -344,8 +346,8 @@ const CryptoDashboard = () => {
               {loadingPrediction ? "Predicting..." : "Predict 30-Day Price"}
             </button>
             {loadingPrediction && (
-              <div style={{ marginTop: "10px", color: "white" }}>
-                <span className="loader"></span> Fetching prediction...
+              <div style={{ marginTop: "10px", color: "white", alignItems: "center", justifyContent: "center",}}>
+                <FetchingPrediction /> 
               </div>
             )}
             {predictedPrice !== null && (
