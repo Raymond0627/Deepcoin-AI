@@ -138,7 +138,8 @@ const CryptoDashboard = () => {
         price: item.price,
       }));
 
-      setHistoricalData(formattedHistory);
+      const last30DaysHistory = formattedHistory.slice(-30);
+      setHistoricalData(last30DaysHistory);
       setSelectedCoin(coinFullName); // Store full name (e.g., Bitcoin)
       setSelectedCoinSymbol(coinSymbol); // Store short symbol (e.g., BTC)
 
@@ -356,7 +357,7 @@ const CryptoDashboard = () => {
                   color: "lightgreen",
                 }}
               >
-                Predicted Price: ${predictedPrice.toFixed(2)}
+               Predicted Price: ${predictedPrice < 0.01 ? predictedPrice.toFixed(8) : predictedPrice.toFixed(2)}
               </div>
             )}
           </div>

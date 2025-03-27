@@ -10,6 +10,8 @@ from sklearn.preprocessing import MinMaxScaler
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
+import tensorflow as tf
+print("GPU Available:", tf.config.list_physical_devices('GPU'))
 
 # Load environment variables
 load_dotenv()
@@ -41,7 +43,7 @@ def get_db_connection():
 def fetch_and_store_crypto_data(symbol):
     try:
         response = requests.get(
-            f"{CRYPTO_API_URL}?fsym={symbol}&tsym=USD&limit=30&api_key={CRYPTOCOMPARE_API_KEY}"
+            f"{CRYPTO_API_URL}?fsym={symbol}&tsym=USD&limit=2000&api_key={CRYPTOCOMPARE_API_KEY}"
         )
         data = response.json()
 
@@ -135,13 +137,13 @@ def predict(symbol: str = "BTC", days: int = 30):
         
         # Create and train the model
         model = Sequential([
-            LSTM(64, return_sequences=True, input_shape=(sequence_length, 1)),
-            LSTM(64, return_sequences=False),
-            Dense(32, activation='relu'),
-            Dense(1)
-        ])
+    LSTM(48, return_sequences=False, input_shape=(sequence_length, 1)),  
+    Dense(16, activation='relu'),
+    Dense(1)
+    ])
+
         model.compile(optimizer="adam", loss="mse")
-        model.fit(X, y, epochs=100, batch_size=4, verbose=0)
+        model.fit(X, y, epochs=30, batch_size=32, verbose=0)
         
         # Generate predictions
         predictions = []
